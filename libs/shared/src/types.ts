@@ -11,3 +11,8 @@ export interface ScrapeJob {
   createdAt: Date;
   updatedAt: Date;
 }
+
+export interface ScrapeJobPayload {
+  jobId: string;
+  url: string;
+}
