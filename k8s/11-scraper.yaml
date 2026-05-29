@@ -1,0 +1,77 @@
+# Scraper — no Service needed (no inbound traffic; pulls from BullMQ).
+# Health port 3002 is used only by k8s probes.
+#
+# HPA is CPU-based here for portability. The "right" signal is BullMQ queue
+# depth — wire prometheus-adapter and switch to a Pods-type metric in prod.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scraper
+  namespace: netnut
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: scraper
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: scraper
+    spec:
+      containers:
+        - name: scraper
+          image: netnut-scraper:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3002
+          envFrom:
+            - configMapRef:
+                name: netnut-config
+            - secretRef:
+                name: postgres-credentials
+          env:
+            - name: SCRAPER_PORT
+              value: "3002"
+          readinessProbe:
+            tcpSocket:
+              port: 3002
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 3002
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: scraper
+  namespace: netnut
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: scraper
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

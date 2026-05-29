@@ -1,0 +1,19 @@
+# Optional. Requires an ingress controller (nginx, traefik, etc.) installed in the cluster.
+# For local clusters without one, port-forward instead:
+#   kubectl -n netnut port-forward svc/api 3000:3000
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api
+  namespace: netnut
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 3000
