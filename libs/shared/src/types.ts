@@ -16,3 +16,8 @@ export interface ScrapeJobPayload {
   jobId: string;
   url: string;
 }
+
+export type JobResponseDto = Omit<ScrapeJob, 'createdAt' | 'updatedAt'> & {
+  createdAt: string;
+  updatedAt: string;
+};
