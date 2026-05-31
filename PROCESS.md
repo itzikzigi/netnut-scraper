@@ -8,7 +8,7 @@ Before writing code I read the brief, looked at Netnut's product surface (reside
 
 ## Architecture (one paragraph)
 
-Three Nest.js services in a single monorepo. `API` is the public edge (`POST /scrape`, `GET /scrape/:id`). It calls `Job Manager` over REST, which validates input, writes the job row to Postgres, and enqueues onto BullMQ (`scrape-jobs`). `Scraper` is a BullMQ worker — it consumes a job, fetches the URL through a rotating proxy pool, writes the result back to Postgres, and publishes `job:<id>:done` on Redis Pub/Sub. The API offers two modes: async by default (`202 { jobId }` + polling on `GET /scrape/:id`), and synchronous when called with `?wait=true` (the API `SUBSCRIBE`s to the Pub/Sub channel and returns the HTML inline, with a configurable timeout). See `architecture.drawio` for the numbered flow.
+Three Nest.js services in a single monorepo. `API` is the public edge (`POST /scrape`, `GET /scrape/:id`). It calls `Job Manager` over REST, which validates input, writes the job row to Postgres, and enqueues onto BullMQ (`scrape-jobs`). `Scraper` is a BullMQ worker — it consumes a job, fetches the URL through a rotating proxy pool, caches the HTML in Redis under a TTL (Postgres keeps only durable metadata), flips the job status in Postgres, and publishes `job:<id>:done` on Redis Pub/Sub. The API offers two modes: async by default (`202 { jobId }` + polling on `GET /scrape/:id`), and synchronous when called with `?wait=true` (the API `SUBSCRIBE`s to the Pub/Sub channel and returns the HTML inline, with a configurable timeout). See `architecture.drawio` for the numbered flow.
 
 ## Stack & why
 
@@ -48,6 +48,12 @@ The ordering matters. If I checked the DB first and then subscribed, a job that 
 
 **`safePublish` swallows publish errors.** A Redis blip after a successful fetch must not roll back a completed job's status. The DB write is authoritative; Pub/Sub is best-effort notification.
 
+**HTML lives in Redis with a TTL, not Postgres.** Scraped bodies are transient and can be large, so they're cached under `job:<id>:html` (`RESULT_TTL_SECONDS`) and Postgres holds only durable metadata (`html` column removed). The worker writes the cache *before* flipping status / publishing, so any reader that observes `completed` is guaranteed the body is already present. The API reads the body straight from Redis, bypassing the Job Manager hop for the heavy payload. Once the TTL lapses: `?wait=true` on an evicted result returns `410 Gone`; `GET /scrape/:id` returns metadata with `html` omitted.
+
+**Worker concurrency.** Scraping is network-bound (each fetch blocks on a ~20 s timeout), so the processor runs `SCRAPER_CONCURRENCY` jobs at once (default 10) instead of BullMQ's default of 1 — otherwise a single in-flight fetch per pod wastes the worker.
+
+**SSRF guard + response size cap.** Target URLs are restricted to `http`/`https` and rejected if they resolve to a private/internal/loopback/link-local address (cloud-metadata `169.254.169.254` included, IPv4 and IPv6). Two layers: a pre-flight DNS check for a clean error, and a connect-time `lookup` guard on the direct-path agents so each redirect hop and DNS rebinding are validated against the actually-resolved IP. On the proxy path the proxy resolves the target, so egress control is the proxy's job. Responses are capped at `FETCH_MAX_BYTES` (`maxContentLength`/`maxBodyLength`) since the body is buffered fully into memory and Redis. A blocked URL is a deterministic failure, so the worker fails it immediately via BullMQ `UnrecoverableError` rather than burning all three retries.
+
 **TCP probes in K8s, not HTTP.** Our apps don't expose a `/health` endpoint and I deliberately didn't add one to keep the manifests code-change-free for this task. A production setup would add `/health` (Nest's `@nestjs/terminus`) and switch to HTTP probes — flagged in `k8s/README.md`.
 
 **Scraper HPA on CPU, with a comment.** Queue depth is the prod-correct signal (BullMQ exposes it). That needs `prometheus-adapter` and a custom Pods-type metric — too much yak-shaving for the bonus. CPU is a defensible proxy because the worker is I/O-bound and CPU rises with concurrent fetches. The YAML carries the comment so a reviewer knows I know.
@@ -62,6 +68,9 @@ The ordering matters. If I checked the DB first and then subscribed, a job that 
 6. **Proxy pool** — `ProxyPoolService` reads `PROXY_POOL` env, round-robin, credential-stripping. Fetcher accepts an optional proxy URL and wires both agents.
 7. **Docker** — multi-stage Dockerfile with an `APP` build arg (one image per app, identical Dockerfile). `docker-compose.yml` with YAML anchors for shared infra env and healthchecks gating app startup.
 8. **K8s** — namespace, Postgres/Redis StatefulSets with PVCs, shared ConfigMap, three Deployments with rolling-update strategy, Scraper HPA, optional Ingress, prod-TODO list in `k8s/README.md`.
+9. **Hardening + tests** — graceful shutdown (`enableShutdownHooks`), concurrent-waiter fix in `JobEventsService`, and the first unit suites (proxy pool, job events, scrape service).
+10. **Redis HTML cache** — moved scraped bodies out of Postgres into a TTL'd Redis key; API reads them directly; `410`/omitted-`html` on expiry.
+11. **Fetch-path hardening** — worker concurrency, SSRF guard (private-IP rejection + connect-time DNS check), response size cap, non-retryable blocked URLs, `http`/`https`-only DTO.
 
 ## What I deliberately did not do
 
@@ -70,8 +79,10 @@ The ordering matters. If I checked the DB first and then subscribed, a job that 
 - **No NetworkPolicies, PDBs, or external secret stores in K8s** — listed as production TODOs in `k8s/README.md` so a reviewer knows I considered them.
 - **No Bull Board** — I'd mount it on the Job Manager at `/admin/queues` behind auth for production. Easy add, but not in the brief.
 - **No retries/timeouts hardening in `JobManagerClient`** — it has a 5 s axios timeout and forwards JM's HTTP errors verbatim. Production would add explicit retries with backoff and a circuit breaker.
-- **No tests** — the brief did not require them and time was better spent on the proxy/queue/wait surface that the assignment is actually evaluating.
 - **No load test or performance numbers** — out of scope.
+- **No `/health` endpoint** — still the one deferred review item; TCP probes cover the manifests. `@nestjs/terminus` + HTTP probes is the prod move.
+
+There *are* unit tests (added in the hardening pass): proxy pool, job-events waiter logic, scrape-service branches, result store, and the SSRF/URL-safety matrix. No live Postgres/Redis required. Run with `npm test`.
 
 ## Tools summary
 

@@ -2,7 +2,7 @@
 
 Backend home assignment from **Netnut** (Israeli proxy / web-scraping company — sells residential/mobile/datacenter proxies and a Website Unblocker API). The task is essentially a miniature of Netnut's actual product: a Nest.js monorepo with three services that together accept scrape jobs, queue them, fetch the target URL through a rotating proxy pool, and return the HTML.
 
-Source brief: `backend_home_assingment (1).pdf`. Design: `architecture.drawio` (numbered flows 1–13 + read/wait variants annotated).
+Source brief: `backend_home_assingment (1).pdf`. Design: `architecture.drawio` (numbered flows 1–14 + read/wait variants annotated).
 
 ## Stack (locked in)
 
@@ -10,14 +10,14 @@ Source brief: `backend_home_assingment (1).pdf`. Design: `architecture.drawio` (
 - **PostgreSQL** + TypeORM — `synchronize: true` when `NODE_ENV !== 'production'`, no migrations yet
 - **Redis** + **BullMQ** for the queue (`scrape-jobs`) and Pub/Sub for `?wait=true` (channel `job:<id>:done`)
 - **REST** between API ↔ Job Manager (gRPC considered, rejected as overkill for take-home)
-- **axios** + `https-proxy-agent` planned for the Scraper fetcher
+- **axios** + `http(s)-proxy-agent` for the Scraper fetcher, with an SSRF guard (private-IP rejection) and a response size cap — see Step 10
 - Path alias: `@app/shared` → `libs/shared/src`
 
-## API contract (planned)
+## API contract
 
-- `POST /scrape { url }` → `202 Accepted { jobId }` (async, default)
-- `POST /scrape?wait=true { url }` → API `SUBSCRIBE`s to `job:<id>:done`; returns `200 { html }` on publish or `504` on timeout
-- `GET /scrape/:id` → `{ status, html?, error? }` for polling
+- `POST /scrape { url }` → `202 Accepted { jobId, status: 'pending' }` (async, default). `url` must be `http`/`https`.
+- `POST /scrape?wait=true { url }` → API registers a waiter then `SUBSCRIBE`s to `job:<id>:done`; returns `200 { jobId, status: 'completed', html }` on publish, `503` on failure, `504` on timeout, `410 Gone` if the result TTL expired before it was read.
+- `GET /scrape/:id` → `{ id, status, html?, error?, attempts }` for polling (`html` omitted once the cache TTL lapses).
 
 ## Architecture decisions (the non-obvious "why"s)
 
@@ -50,5 +50,6 @@ Source brief: `backend_home_assingment (1).pdf`. Design: `architecture.drawio` (
   - **Graceful shutdown:** all three `main.ts` now call `app.enableShutdownHooks()`. Without it Nest never fires `OnModuleDestroy` on SIGTERM, so the ioredis `quit()` hooks (`JobEventsService`, `JobEventsPublisher`) and the BullMQ worker were leaking connections / dropping in-flight jobs on every k8s rolling update. The hooks were already written — they were just dead code until now.
   - **Concurrent waiters fix:** `JobEventsService` changed `Map<string, () => void>` → `Map<string, Set<() => void>>`. Two `?wait=true` requests for the same `jobId` used to collide — the second `waiters.set` overwrote the first, stranding it until timeout (spurious 504). The `pmessage` handler now resolves **every** waiter for an id (iterating a copy, since each resolve mutates the set); `waitFor` adds/removes its own resolver with per-id cleanup.
   - **Tests:** first specs in the repo (Jest was configured in Step 0 but unused). 17 tests / 3 suites, no live Postgres/Redis. `proxy-pool.service.spec.ts` (parsing, round-robin wrap, `describe()` credential stripping). `job-events.service.spec.ts` (resolve-on-publish, ignore-other-ids, timeout, **regression test for the concurrent-waiters fix**; mocks `ioredis` + fake timers). `scrape.service.spec.ts` (all `submit` branches incl. 503/504, the race-safe "waiter-before-DB-read" ordering, `getStatus` null→undefined mapping).
-  - **Not done (deferred review items):** SSRF guard on target URLs, axios `maxContentLength`/`maxBodyLength` cap, real `/health` endpoints, restricting `IsUrl` to `http`/`https`.
+  - **Not done (deferred review items):** SSRF guard, size cap, and `http`/`https`-only validation — all addressed in **Step 10**. Still open: real `/health` endpoints (TCP probes cover k8s for now).
 - [x] Step 9 — HTML result cache in Redis (TTL'd), not Postgres. Scraped bodies are inherently transient, so they no longer live in `jobs.html` (column **removed**); Postgres keeps only durable metadata. `ResultStoreService` (`libs/shared/src/result/`) wraps its own ioredis client — a Pub/Sub subscriber connection can't run GET/SET, so the cache needs a normal-mode client — and does `SET job:<id>:html <body> EX RESULT_TTL_SECONDS` (default 3600). **Write ordering matters:** the worker caches the body in Redis *before* `markCompleted`/publish, so any reader that observes `completed` (via DB or the done event) is guaranteed the HTML is already present (extends the Step 3 race-safe pattern). The **API reads HTML straight from Redis**, bypassing the JM REST hop for the heavy body — `JobResponseDto` carries metadata only. Expiry handling: `?wait=true` on a completed-but-evicted job → **410 Gone**; `GET /scrape/:id` returns metadata with `html` omitted once the TTL lapses. `synchronize:true` drops the old `html` column on next boot (no migration; consistent with the existing no-migrations-yet TODO). Tests: `result-store.service.spec.ts` (SET-with-EX, default TTL, GET miss→null) + `scrape.service.spec.ts` updated for the cache (incl. the 410-expired path). 23 tests / 4 suites green.
+- [x] Step 10 — Fetch-path hardening (concurrency + SSRF + size cap). **Concurrency:** `@Processor(SCRAPE_QUEUE_NAME, { concurrency: SCRAPER_CONCURRENCY })` (default 10, read from `process.env` because the decorator runs before DI) — scraping is network-bound, so BullMQ's default of 1 starved each pod. **SSRF:** `UrlSafetyService` (`apps/scraper/src/fetcher/`) enforces `http`/`https` and rejects targets resolving to private/internal/loopback/link-local/reserved ranges (IPv4 + IPv6, incl. `169.254.169.254` metadata and IPv4-mapped v6). Two layers: a pre-flight `assertPublicUrl` (clean error, fast) and a connect-time `guardedLookup` installed on the **direct-path** http/https agents so each redirect hop and DNS rebinding are validated against the resolved IP. **Proxy path:** the proxy resolves the target, so SSRF egress control is the proxy's responsibility — only the pre-flight check applies there. **Size cap:** `FETCH_MAX_BYTES` (default ~5 MB) via axios `maxContentLength`/`maxBodyLength`, because the body is buffered fully into memory + Redis. **Non-retryable:** a `BlockedUrlError` is deterministic, so the processor `markFailed`s immediately and throws BullMQ `UnrecoverableError` instead of burning all 3 retries. **DTO:** `UrlInputDto` restricted to `protocols: ['http','https']`. `ALLOW_PRIVATE_TARGETS=true` is a dev-only escape hatch (logs a warning). Env wired into `.env.example` / compose / k8s ConfigMap. Tests: `url-safety.service.spec.ts` (blocked/allowed IP matrix, protocol + malformed rejection, literal-IP targets, allow-private bypass). 51 tests / 5 suites green.

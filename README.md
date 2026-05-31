@@ -29,6 +29,7 @@ See `architecture.drawio` for the full design.
 - **PostgreSQL** + TypeORM (`synchronize` in non-prod, migrations TODO for prod)
 - **Redis** + **BullMQ** for the queue + Pub/Sub channel `job:<id>:done` for `?wait=true`
 - **axios** + `http(s)-proxy-agent` for fetching, env-configured proxy pool with round-robin rotation
+- **SSRF guard** on the fetch path — `http`/`https` only, private/internal/loopback/link-local targets rejected (pre-flight + connect-time DNS check), response size capped
 
 ## Run with Docker Compose (recommended)
 
@@ -87,11 +88,16 @@ See `.env.example`. Key vars:
 - `JOB_MANAGER_URL` — service-to-service (default `http://localhost:3001`)
 - `SCRAPE_WAIT_TIMEOUT_MS` — `?wait=true` budget (default `30000`)
 - `FETCH_TIMEOUT_MS` — per-attempt axios timeout (default `20000`)
+- `FETCH_MAX_BYTES` — max response body buffered into memory / Redis (default `5000000`, ~5 MB)
+- `SCRAPER_CONCURRENCY` — jobs processed in parallel per scraper worker (default `10`; scraping is I/O-bound, so >1 is a big throughput win)
+- `ALLOW_PRIVATE_TARGETS` — dev-only escape hatch; when `true` the SSRF guard is disabled so localhost/private targets are allowed. Keep `false` in any shared environment.
 - `PROXY_POOL` — comma-separated proxy URLs. Empty = direct fetch. Credentials are stripped before logging and before being stored in `jobs.proxy_used`.
 
 ## Notes
 
-- BullMQ retries failed fetches **3 times** with exponential backoff (2 s → 4 s → 8 s). Each retry picks the next proxy from the pool.
+- Each scraper worker processes `SCRAPER_CONCURRENCY` jobs in parallel (default 10) — the work is network-bound, so one in-flight fetch per pod would waste it.
+- BullMQ retries failed fetches **3 times** with exponential backoff (2 s → 4 s → 8 s). Each retry picks the next proxy from the pool. A **blocked/invalid URL fails immediately** (BullMQ `UnrecoverableError`) — retrying a deterministic rejection can't help.
+- **SSRF guard:** target URLs must be `http`/`https` and must not resolve to a private/internal/loopback/link-local address. Validated both before connecting and at connect time (so redirects and DNS rebinding are covered). On the proxy path, egress control is the proxy's responsibility. Disable only with `ALLOW_PRIVATE_TARGETS=true` for local dev. Response bodies are capped at `FETCH_MAX_BYTES`.
 - `synchronize: true` (TypeORM) is on in non-prod — auto-creates the `jobs` table. **Migrations are required for production**; not implemented in this take-home.
 - The Scraper writes job status directly to Postgres (intentional — see CLAUDE.md). Workers and Job Manager share `DatabaseModule` from `libs/shared`.
 - Scraped **HTML is cached in Redis with a TTL** (`RESULT_TTL_SECONDS`), not persisted in Postgres — results are transient, so Postgres holds only durable metadata. The API reads the body straight from Redis, bypassing the Job Manager hop.

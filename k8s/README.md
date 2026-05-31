@@ -61,6 +61,7 @@ With an Ingress controller in the cluster, `13-ingress.yaml` exposes the API at 
 ## Scaling
 
 - **Scraper HPA** scales `2 → 10` based on **CPU @ 70%**. The honest signal is **BullMQ queue depth**, which requires `prometheus-adapter` + a custom Pods-type metric — a production TODO. CPU is a reasonable proxy because the Scraper is mostly I/O-bound and CPU rises with concurrent fetches.
+- Each scraper pod processes `SCRAPER_CONCURRENCY` jobs in parallel (default 10), so total in-flight fetches ≈ replicas × concurrency. Tune both together: raise concurrency for throughput per pod, raise replicas (HPA) for fault tolerance and CPU headroom.
 - API and Job Manager are fixed at 2 replicas. They're light; horizontal scaling beyond that needs evidence.
 
 ## What this skips (production TODOs)
@@ -68,7 +69,7 @@ With an Ingress controller in the cluster, `13-ingress.yaml` exposes the API at 
 - **Real DB** — use a managed Postgres (RDS, Cloud SQL); the in-cluster StatefulSet is for demo.
 - **TypeORM migrations** — current setup uses `synchronize` in non-prod. Production needs proper migrations and a job/init container to run them.
 - **TLS** — cert-manager + a real Ingress host.
-- **NetworkPolicies** — restrict pod-to-pod traffic (only API → Job Manager, only apps → Postgres/Redis).
+- **NetworkPolicies** — restrict pod-to-pod traffic (only API → Job Manager, only apps → Postgres/Redis). The scraper's app-level SSRF guard (private-IP rejection) reduces but does not replace an **egress** NetworkPolicy — defense in depth against a guard bypass or a misconfigured `ALLOW_PRIVATE_TARGETS`.
 - **PodDisruptionBudgets** — keep min replicas during voluntary disruptions.
 - **Secrets management** — these manifests use a plain `Secret`. Real deployments should use external secret stores (Sealed Secrets, External Secrets Operator, Vault).
 - **Observability** — no Prometheus scrape annotations / no log shipping. Add when wiring queue-depth HPA.
