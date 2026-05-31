@@ -16,6 +16,12 @@ data:
   RESULT_TTL_SECONDS: "3600"
   FETCH_TIMEOUT_MS: "20000"
   FETCH_USER_AGENT: NetnutScraperBot/0.1
+  # Max response body buffered into memory / Redis (bytes). ~5 MB.
+  FETCH_MAX_BYTES: "5000000"
+  # Concurrent jobs per scraper pod. Scraping is I/O-bound, so >1 is a big win.
+  SCRAPER_CONCURRENCY: "10"
+  # SSRF guard: reject targets resolving to private/internal IPs. Keep "false".
+  ALLOW_PRIVATE_TARGETS: "false"
   # Override at deploy time, e.g. with `kubectl set env deploy/scraper PROXY_POOL=...`
   PROXY_POOL: ""
   # Demo only — needed because no migrations are wired yet. Production should

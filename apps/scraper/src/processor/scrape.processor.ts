@@ -1,12 +1,19 @@
 import { Logger } from '@nestjs/common';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Job } from 'bullmq';
+import { Job, UnrecoverableError } from 'bullmq';
 import { JobsService, ResultStoreService, SCRAPE_QUEUE_NAME, ScrapeJobPayload } from '@app/shared';
 import { FetcherService } from '../fetcher/fetcher.service';
 import { ProxyPoolService } from '../fetcher/proxy-pool.service';
+import { BlockedUrlError } from '../fetcher/url-safety.service';
 import { JobEventsPublisher } from './job-events.publisher';
 
-@Processor(SCRAPE_QUEUE_NAME)
+// Scraping is network-bound (each fetch waits on a ~20s timeout), so a single
+// in-flight job per worker wastes the pod. Process several concurrently;
+// override via SCRAPER_CONCURRENCY. Read from process.env here because the
+// @Processor decorator is evaluated at class-definition time, before DI.
+const CONCURRENCY = parseInt(process.env.SCRAPER_CONCURRENCY ?? '10', 10);
+
+@Processor(SCRAPE_QUEUE_NAME, { concurrency: CONCURRENCY })
 export class ScrapeProcessor extends WorkerHost {
   private readonly logger = new Logger(ScrapeProcessor.name);
 
@@ -40,11 +47,17 @@ export class ScrapeProcessor extends WorkerHost {
       html = await this.fetcher.fetch(url, proxy);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`Fetch failed for ${jobId} (${attempt}/${maxAttempts}): ${message}`);
-      if (attempt >= maxAttempts) {
+      // A blocked/malformed URL is deterministic — retrying can't help, so fail
+      // it now and tell BullMQ not to retry.
+      const unrecoverable = err instanceof BlockedUrlError;
+      this.logger.warn(
+        `Fetch failed for ${jobId} (${attempt}/${maxAttempts})${unrecoverable ? ' [unrecoverable]' : ''}: ${message}`,
+      );
+      if (unrecoverable || attempt >= maxAttempts) {
         await this.jobs.markFailed(jobId, message);
         await this.safePublish(jobId);
       }
+      if (unrecoverable) throw new UnrecoverableError(message);
       throw err;
     }
 

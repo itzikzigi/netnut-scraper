@@ -8,7 +8,7 @@ import { IsString, IsUrl, MaxLength } from 'class-validator';
  */
 export class UrlInputDto {
   @IsString()
-  @IsUrl({ require_protocol: true, require_valid_protocol: true })
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true, require_valid_protocol: true })
   @MaxLength(2048)
   url!: string;
 }
