@@ -1,10 +1,11 @@
 import {
   GatewayTimeoutException,
+  GoneException,
   Injectable,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { JobResponseDto } from '@app/shared';
+import { JobResponseDto, ResultStoreService } from '@app/shared';
 import { JobManagerClient } from '../job-manager-client/job-manager-client.service';
 import { JobEventsService } from '../events/job-events.service';
 
@@ -33,6 +34,7 @@ export class ScrapeService {
   constructor(
     private readonly jm: JobManagerClient,
     private readonly events: JobEventsService,
+    private readonly results: ResultStoreService,
     config: ConfigService,
   ) {
     this.waitTimeoutMs = parseInt(config.get<string>('SCRAPE_WAIT_TIMEOUT_MS', '30000'), 10);
@@ -58,8 +60,14 @@ export class ScrapeService {
       current = await this.jm.getJob(created.id);
     }
 
-    if (current.status === 'completed' && current.html !== null) {
-      return { jobId: current.id, status: 'completed', html: current.html };
+    if (current.status === 'completed') {
+      const html = await this.results.get(current.id);
+      if (html !== null) {
+        return { jobId: current.id, status: 'completed', html };
+      }
+      // Metadata says completed but the cached body is gone — only possible if
+      // the result TTL elapsed before this (just-submitted) request read it.
+      throw new GoneException(`Result for job ${current.id} has expired`);
     }
     if (current.status === 'failed') {
       throw new ServiceUnavailableException(current.error ?? 'Scrape failed');
@@ -71,10 +79,13 @@ export class ScrapeService {
 
   async getStatus(id: string): Promise<ScrapeStatusResponse> {
     const job = await this.jm.getJob(id);
+    // Only hit the result cache when there's something to fetch; an expired
+    // TTL simply yields `undefined` html on an otherwise-completed job.
+    const html = job.status === 'completed' ? await this.results.get(id) : null;
     return {
       id: job.id,
       status: job.status,
-      html: job.html ?? undefined,
+      html: html ?? undefined,
       error: job.error ?? undefined,
       attempts: job.attempts,
     };

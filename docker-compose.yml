@@ -74,6 +74,7 @@ services:
       SCRAPER_PORT: 3002
       FETCH_TIMEOUT_MS: 20000
       FETCH_USER_AGENT: NetnutScraperBot/0.1
+      RESULT_TTL_SECONDS: 3600
       PROXY_POOL: ""
       DB_SYNCHRONIZE: "true"
       <<: [*postgres-env, *redis-env]
@@ -95,6 +96,7 @@ services:
       API_PORT: 3000
       JOB_MANAGER_URL: http://job-manager:3001
       SCRAPE_WAIT_TIMEOUT_MS: 30000
+      RESULT_TTL_SECONDS: 3600
       <<: *redis-env
     depends_on:
       redis:

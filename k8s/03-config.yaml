@@ -13,6 +13,7 @@ data:
   REDIS_PORT: "6379"
   JOB_MANAGER_URL: http://job-manager:3001
   SCRAPE_WAIT_TIMEOUT_MS: "30000"
+  RESULT_TTL_SECONDS: "3600"
   FETCH_TIMEOUT_MS: "20000"
   FETCH_USER_AGENT: NetnutScraperBot/0.1
   # Override at deploy time, e.g. with `kubectl set env deploy/scraper PROXY_POOL=...`

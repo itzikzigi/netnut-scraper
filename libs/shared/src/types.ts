@@ -4,7 +4,8 @@ export interface ScrapeJob {
   id: string;
   url: string;
   status: JobStatus;
-  html: string | null;
+  // Scraped HTML is NOT persisted here — it lives in Redis with a TTL
+  // (see ResultStoreService). This entity/contract holds durable metadata only.
   error: string | null;
   attempts: number;
   proxyUsed: string | null;

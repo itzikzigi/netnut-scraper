@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
-import { JobsService, SCRAPE_QUEUE_NAME, ScrapeJobPayload } from '@app/shared';
+import { JobsService, ResultStoreService, SCRAPE_QUEUE_NAME, ScrapeJobPayload } from '@app/shared';
 import { FetcherService } from '../fetcher/fetcher.service';
 import { ProxyPoolService } from '../fetcher/proxy-pool.service';
 import { JobEventsPublisher } from './job-events.publisher';
@@ -14,6 +14,7 @@ export class ScrapeProcessor extends WorkerHost {
     private readonly fetcher: FetcherService,
     private readonly proxyPool: ProxyPoolService,
     private readonly jobs: JobsService,
+    private readonly results: ResultStoreService,
     private readonly publisher: JobEventsPublisher,
   ) {
     super();
@@ -47,7 +48,11 @@ export class ScrapeProcessor extends WorkerHost {
       throw err;
     }
 
-    await this.jobs.markCompleted(jobId, html);
+    // Cache the body in Redis BEFORE flipping status / publishing, so any
+    // reader that observes 'completed' (via DB or the done event) is
+    // guaranteed to find the HTML already present.
+    await this.results.store(jobId, html);
+    await this.jobs.markCompleted(jobId);
     await this.safePublish(jobId);
     this.logger.log(`Completed ${jobId} (${html.length} bytes)`);
   }

@@ -15,7 +15,6 @@ export class JobsService {
       url,
       status: 'pending',
       attempts: 0,
-      html: null,
       error: null,
       proxyUsed: null,
     });
@@ -41,8 +40,10 @@ export class JobsService {
       .execute();
   }
 
-  async markCompleted(id: string, html: string): Promise<void> {
-    await this.repo.update(id, { status: 'completed', html, error: null });
+  async markCompleted(id: string): Promise<void> {
+    // HTML is written to the Redis result cache by the caller; here we only
+    // flip the durable metadata.
+    await this.repo.update(id, { status: 'completed', error: null });
   }
 
   async markFailed(id: string, error: string): Promise<void> {

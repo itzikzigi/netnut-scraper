@@ -21,9 +21,6 @@ export class JobEntity implements ScrapeJob {
   status!: JobStatus;
 
   @Column('text', { nullable: true })
-  html!: string | null;
-
-  @Column('text', { nullable: true })
   error!: string | null;
 
   @Column('int', { default: 0 })

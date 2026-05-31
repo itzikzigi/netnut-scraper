@@ -74,15 +74,16 @@ npm run start:api:dev
 | Method | Path | Notes |
 |---|---|---|
 | `POST` | `/scrape` | Body `{ url }`. Returns `202 { jobId, status: 'pending' }` |
-| `POST` | `/scrape?wait=true` | Same body. Blocks up to `SCRAPE_WAIT_TIMEOUT_MS`. `200 { jobId, status: 'completed', html }`, `503` on failure, `504` on timeout. |
-| `GET` | `/scrape/:id` | Returns `{ id, status, html?, error?, attempts }` |
+| `POST` | `/scrape?wait=true` | Same body. Blocks up to `SCRAPE_WAIT_TIMEOUT_MS`. `200 { jobId, status: 'completed', html }`, `503` on failure, `504` on timeout, `410` if the result expired from cache. |
+| `GET` | `/scrape/:id` | Returns `{ id, status, html?, error?, attempts }`. `html` is present only while the result is still cached (see `RESULT_TTL_SECONDS`). |
 
 ## Config
 
 See `.env.example`. Key vars:
 
 - `POSTGRES_*` — DB connection
-- `REDIS_HOST` / `REDIS_PORT` — queue + Pub/Sub
+- `REDIS_HOST` / `REDIS_PORT` — queue + Pub/Sub + HTML result cache
+- `RESULT_TTL_SECONDS` — how long scraped HTML lives in the Redis cache (default `3600`)
 - `JOB_MANAGER_URL` — service-to-service (default `http://localhost:3001`)
 - `SCRAPE_WAIT_TIMEOUT_MS` — `?wait=true` budget (default `30000`)
 - `FETCH_TIMEOUT_MS` — per-attempt axios timeout (default `20000`)
@@ -93,3 +94,4 @@ See `.env.example`. Key vars:
 - BullMQ retries failed fetches **3 times** with exponential backoff (2 s → 4 s → 8 s). Each retry picks the next proxy from the pool.
 - `synchronize: true` (TypeORM) is on in non-prod — auto-creates the `jobs` table. **Migrations are required for production**; not implemented in this take-home.
 - The Scraper writes job status directly to Postgres (intentional — see CLAUDE.md). Workers and Job Manager share `DatabaseModule` from `libs/shared`.
+- Scraped **HTML is cached in Redis with a TTL** (`RESULT_TTL_SECONDS`), not persisted in Postgres — results are transient, so Postgres holds only durable metadata. The API reads the body straight from Redis, bypassing the Job Manager hop.

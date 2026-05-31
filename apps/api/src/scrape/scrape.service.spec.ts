@@ -1,6 +1,10 @@
-import { GatewayTimeoutException, ServiceUnavailableException } from '@nestjs/common';
+import {
+  GatewayTimeoutException,
+  GoneException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { JobResponseDto } from '@app/shared';
+import { JobResponseDto, ResultStoreService } from '@app/shared';
 import { ScrapeService } from './scrape.service';
 import { JobManagerClient } from '../job-manager-client/job-manager-client.service';
 import { JobEventsService } from '../events/job-events.service';
@@ -10,7 +14,6 @@ function job(overrides: Partial<JobResponseDto> = {}): JobResponseDto {
     id: 'job-1',
     url: 'http://example.com',
     status: 'pending',
-    html: null,
     error: null,
     attempts: 0,
     proxyUsed: null,
@@ -23,6 +26,7 @@ function job(overrides: Partial<JobResponseDto> = {}): JobResponseDto {
 describe('ScrapeService', () => {
   let jm: jest.Mocked<Pick<JobManagerClient, 'createJob' | 'getJob'>>;
   let events: jest.Mocked<Pick<JobEventsService, 'waitFor'>>;
+  let results: jest.Mocked<Pick<ResultStoreService, 'get'>>;
   let service: ScrapeService;
 
   const config = {
@@ -32,15 +36,17 @@ describe('ScrapeService', () => {
   beforeEach(() => {
     jm = { createJob: jest.fn(), getJob: jest.fn() };
     events = { waitFor: jest.fn().mockResolvedValue(undefined) };
+    results = { get: jest.fn() };
     service = new ScrapeService(
       jm as unknown as JobManagerClient,
       events as unknown as JobEventsService,
+      results as unknown as ResultStoreService,
       config,
     );
   });
 
   describe('submit (async, wait=false)', () => {
-    it('creates the job and returns 202-style pending without waiting', async () => {
+    it('creates the job and returns 202-style pending without waiting or reading the cache', async () => {
       jm.createJob.mockResolvedValue(job({ id: 'abc' }));
 
       const result = await service.submit('http://example.com', false);
@@ -48,16 +54,19 @@ describe('ScrapeService', () => {
       expect(result).toEqual({ jobId: 'abc', status: 'pending' });
       expect(events.waitFor).not.toHaveBeenCalled();
       expect(jm.getJob).not.toHaveBeenCalled();
+      expect(results.get).not.toHaveBeenCalled();
     });
   });
 
   describe('submit (sync, wait=true)', () => {
-    it('returns html immediately when the job is already completed', async () => {
+    it('returns html from the result cache when the job is already completed', async () => {
       jm.createJob.mockResolvedValue(job({ id: 'abc' }));
-      jm.getJob.mockResolvedValue(job({ id: 'abc', status: 'completed', html: '<html>hi</html>' }));
+      jm.getJob.mockResolvedValue(job({ id: 'abc', status: 'completed' }));
+      results.get.mockResolvedValue('<html>hi</html>');
 
       const result = await service.submit('http://example.com', true);
 
+      expect(results.get).toHaveBeenCalledWith('abc');
       expect(result).toEqual({ jobId: 'abc', status: 'completed', html: '<html>hi</html>' });
     });
 
@@ -69,25 +78,37 @@ describe('ScrapeService', () => {
       });
       jm.getJob.mockImplementation(async () => {
         order.push('getJob');
-        return job({ id: 'abc', status: 'completed', html: 'x' });
+        return job({ id: 'abc', status: 'completed' });
       });
+      results.get.mockResolvedValue('x');
 
       await service.submit('http://example.com', true);
 
       expect(order[0]).toBe('waitFor');
     });
 
-    it('waits then re-reads the DB and returns html when it completes', async () => {
+    it('waits, re-reads the DB, then returns cached html when it completes', async () => {
       jm.createJob.mockResolvedValue(job({ id: 'abc' }));
       jm.getJob
         .mockResolvedValueOnce(job({ id: 'abc', status: 'in_progress' }))
-        .mockResolvedValueOnce(job({ id: 'abc', status: 'completed', html: 'done' }));
+        .mockResolvedValueOnce(job({ id: 'abc', status: 'completed' }));
+      results.get.mockResolvedValue('done');
 
       const result = await service.submit('http://example.com', true);
 
       expect(events.waitFor).toHaveBeenCalledWith('abc', 1000);
       expect(jm.getJob).toHaveBeenCalledTimes(2);
       expect(result).toEqual({ jobId: 'abc', status: 'completed', html: 'done' });
+    });
+
+    it('throws 410 Gone when completed but the cached result has expired', async () => {
+      jm.createJob.mockResolvedValue(job({ id: 'abc' }));
+      jm.getJob.mockResolvedValue(job({ id: 'abc', status: 'completed' }));
+      results.get.mockResolvedValue(null);
+
+      await expect(service.submit('http://example.com', true)).rejects.toBeInstanceOf(
+        GoneException,
+      );
     });
 
     it('throws 503 when the job failed', async () => {
@@ -97,6 +118,7 @@ describe('ScrapeService', () => {
       await expect(service.submit('http://example.com', true)).rejects.toBeInstanceOf(
         ServiceUnavailableException,
       );
+      expect(results.get).not.toHaveBeenCalled();
     });
 
     it('throws 504 when the job is still unfinished after the wait', async () => {
@@ -110,11 +132,12 @@ describe('ScrapeService', () => {
   });
 
   describe('getStatus', () => {
-    it('maps null html/error to undefined and passes through attempts', async () => {
+    it('does not touch the cache for an unfinished job', async () => {
       jm.getJob.mockResolvedValue(job({ id: 'abc', status: 'pending', attempts: 2 }));
 
       const result = await service.getStatus('abc');
 
+      expect(results.get).not.toHaveBeenCalled();
       expect(result).toEqual({
         id: 'abc',
         status: 'pending',
@@ -122,6 +145,26 @@ describe('ScrapeService', () => {
         error: undefined,
         attempts: 2,
       });
+    });
+
+    it('returns cached html for a completed job', async () => {
+      jm.getJob.mockResolvedValue(job({ id: 'abc', status: 'completed', attempts: 1 }));
+      results.get.mockResolvedValue('<html>ok</html>');
+
+      const result = await service.getStatus('abc');
+
+      expect(result.html).toBe('<html>ok</html>');
+      expect(result.status).toBe('completed');
+    });
+
+    it('omits html when a completed job has expired from the cache', async () => {
+      jm.getJob.mockResolvedValue(job({ id: 'abc', status: 'completed' }));
+      results.get.mockResolvedValue(null);
+
+      const result = await service.getStatus('abc');
+
+      expect(result.html).toBeUndefined();
+      expect(result.status).toBe('completed');
     });
   });
 });
