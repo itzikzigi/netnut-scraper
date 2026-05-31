@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosRequestConfig } from 'axios';
 import { Agent as HttpAgent } from 'node:http';
@@ -9,7 +9,6 @@ import { UrlSafetyService } from './url-safety.service';
 
 @Injectable()
 export class FetcherService {
-  private readonly logger = new Logger(FetcherService.name);
   private readonly timeoutMs: number;
   private readonly userAgent: string;
   private readonly maxBytes: number;
