@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: job-manager
+  namespace: netnut
+spec:
+  selector:
+    app: job-manager
+  ports:
+    - port: 3001
+      targetPort: 3001
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: job-manager
+  namespace: netnut
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: job-manager
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: job-manager
+    spec:
+      containers:
+        - name: job-manager
+          image: netnut-job-manager:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3001
+          envFrom:
+            - configMapRef:
+                name: netnut-config
+            - secretRef:
+                name: postgres-credentials
+          env:
+            - name: JOB_MANAGER_PORT
+              value: "3001"
+          readinessProbe:
+            tcpSocket:
+              port: 3001
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 3001
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "192Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

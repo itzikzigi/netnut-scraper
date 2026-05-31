@@ -1,0 +1,29 @@
+# Shared, non-sensitive config consumed by all three apps via envFrom.
+# Secrets (POSTGRES_PASSWORD) come from the postgres-credentials Secret.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: netnut-config
+  namespace: netnut
+data:
+  NODE_ENV: production
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  JOB_MANAGER_URL: http://job-manager:3001
+  SCRAPE_WAIT_TIMEOUT_MS: "30000"
+  RESULT_TTL_SECONDS: "3600"
+  FETCH_TIMEOUT_MS: "20000"
+  FETCH_USER_AGENT: NetnutScraperBot/0.1
+  # Max response body buffered into memory / Redis (bytes). ~5 MB.
+  FETCH_MAX_BYTES: "5000000"
+  # Concurrent jobs per scraper pod. Scraping is I/O-bound, so >1 is a big win.
+  SCRAPER_CONCURRENCY: "10"
+  # SSRF guard: reject targets resolving to private/internal IPs. Keep "false".
+  ALLOW_PRIVATE_TARGETS: "false"
+  # Override at deploy time, e.g. with `kubectl set env deploy/scraper PROXY_POOL=...`
+  PROXY_POOL: ""
+  # Demo only — needed because no migrations are wired yet. Production should
+  # set this to "false" and run real migrations instead.
+  DB_SYNCHRONIZE: "true"

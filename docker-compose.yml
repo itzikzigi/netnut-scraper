@@ -1,0 +1,114 @@
+# One-command local stack.
+#
+#   docker compose up --build
+#
+# For dev with hot-reload, comment out api / job-manager / scraper below and
+# run them natively (`npm run start:*:dev`) — postgres + redis still come from
+# this file.
+
+x-postgres-env: &postgres-env
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: 5432
+  POSTGRES_USER: netnut
+  POSTGRES_PASSWORD: netnut
+  POSTGRES_DB: netnut
+
+x-redis-env: &redis-env
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: netnut
+      POSTGRES_PASSWORD: netnut
+      POSTGRES_DB: netnut
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U netnut -d netnut"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - redis_data:/data
+
+  job-manager:
+    build:
+      context: .
+      args:
+        APP: job-manager
+    environment:
+      NODE_ENV: production
+      JOB_MANAGER_PORT: 3001
+      DB_SYNCHRONIZE: "true"
+      <<: [*postgres-env, *redis-env]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3001:3001"
+
+  scraper:
+    build:
+      context: .
+      args:
+        APP: scraper
+    environment:
+      NODE_ENV: production
+      SCRAPER_PORT: 3002
+      FETCH_TIMEOUT_MS: 20000
+      FETCH_USER_AGENT: NetnutScraperBot/0.1
+      FETCH_MAX_BYTES: 5000000
+      SCRAPER_CONCURRENCY: 10
+      ALLOW_PRIVATE_TARGETS: "false"
+      RESULT_TTL_SECONDS: 3600
+      PROXY_POOL: ""
+      DB_SYNCHRONIZE: "true"
+      <<: [*postgres-env, *redis-env]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3002:3002"
+
+  api:
+    build:
+      context: .
+      args:
+        APP: api
+    environment:
+      NODE_ENV: production
+      API_PORT: 3000
+      JOB_MANAGER_URL: http://job-manager:3001
+      SCRAPE_WAIT_TIMEOUT_MS: 30000
+      RESULT_TTL_SECONDS: 3600
+      <<: *redis-env
+    depends_on:
+      redis:
+        condition: service_healthy
+      job-manager:
+        condition: service_started
+    ports:
+      - "3000:3000"
+
+volumes:
+  pg_data:
+  redis_data:

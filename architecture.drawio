@@ -1,0 +1,201 @@
+<mxfile host="app.diagrams.net" agent="Claude" version="22.0.0">
+  <diagram id="netnut-arch" name="System Architecture">
+    <mxGraphModel dx="1422" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1280" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="Netnut Scraper — System Architecture" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="700" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="Nest.js monorepo · async-first · Postgres (metadata) + Redis (queue · pub/sub · HTML cache) · rotating proxy pool · SSRF-guarded fetch" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontStyle=2;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="40" y="50" width="800" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="client" value="Client / User" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="600" y="90" width="160" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="api_tier_box" value="API Tier (Nest HTTP services)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#999999;verticalAlign=top;fontStyle=2;fontSize=11;dashed=1;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="440" y="170" width="380" height="240" as="geometry" />
+        </mxCell>
+
+        <mxCell id="api" value="&lt;b&gt;API Service&lt;/b&gt;&lt;br/&gt;&lt;font style=&quot;font-size: 10px;&quot;&gt;POST /scrape · GET /scrape/:id&lt;br/&gt;Calls Job Manager via REST · Redis SUBSCRIBE for ?wait=true&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="470" y="200" width="320" height="75" as="geometry" />
+        </mxCell>
+
+        <mxCell id="jobmgr" value="&lt;b&gt;Job Manager Service&lt;/b&gt;&lt;br/&gt;&lt;font style=&quot;font-size: 10px;&quot;&gt;validate (DTO) · persist · enqueue · read&lt;br/&gt;Owns the Job state machine&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="470" y="310" width="320" height="75" as="geometry" />
+        </mxCell>
+
+        <mxCell id="data_tier_box" value="Data Tier" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#999999;verticalAlign=top;fontStyle=2;fontSize=11;dashed=1;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="40" y="430" width="380" height="220" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pg" value="&lt;b&gt;PostgreSQL&lt;/b&gt;&lt;br/&gt;&lt;font style=&quot;font-size: 9px;&quot;&gt;jobs(id, url, status, error,&lt;br/&gt;attempts, proxy_used,&lt;br/&gt;created_at, updated_at)&lt;br/&gt;&lt;i&gt;durable metadata — no HTML&lt;/i&gt;&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=14;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="80" y="475" width="140" height="130" as="geometry" />
+        </mxCell>
+
+        <mxCell id="redis" value="&lt;b&gt;Redis&lt;/b&gt;&lt;br/&gt;&lt;font style=&quot;font-size: 9px;&quot;&gt;BullMQ queue &lt;i&gt;scrape-jobs&lt;/i&gt;&lt;br/&gt;Pub/Sub &lt;i&gt;job:&amp;lt;id&amp;gt;:done&lt;/i&gt;&lt;br/&gt;HTML cache &lt;i&gt;job:&amp;lt;id&amp;gt;:html&lt;/i&gt;&lt;br/&gt;(TTL = RESULT_TTL_SECONDS)&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=14;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="250" y="475" width="150" height="140" as="geometry" />
+        </mxCell>
+
+        <mxCell id="worker_tier_box" value="Worker Tier (horizontally scaled · HPA on CPU; queue-depth = prod TODO)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#999999;verticalAlign=top;fontStyle=2;fontSize=11;dashed=1;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="440" y="430" width="240" height="220" as="geometry" />
+        </mxCell>
+
+        <mxCell id="w1" value="&lt;b&gt;Scraper Worker 1&lt;/b&gt;&lt;br/&gt;&lt;font style=&quot;font-size: 9px;&quot;&gt;BullMQ Processor (concurrency N)&lt;br/&gt;axios + HttpsProxyAgent&lt;br/&gt;SSRF guard · response size cap&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="460" y="462" width="200" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="w2" value="Scraper Worker 2" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="460" y="540" width="200" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="wn" value="Scraper Worker N" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="460" y="595" width="200" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="egress_box" value="Egress / External" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#999999;verticalAlign=top;fontStyle=2;fontSize=11;dashed=1;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="700" y="430" width="500" height="220" as="geometry" />
+        </mxCell>
+
+        <mxCell id="proxy" value="&lt;b&gt;Proxy Pool&lt;/b&gt;&lt;br/&gt;&lt;font style=&quot;font-size: 9px;&quot;&gt;env: PROXY_POOL=url1,url2,...&lt;br/&gt;rotated per attempt&lt;br/&gt;(skipped when empty)&lt;/font&gt;" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="730" y="475" width="180" height="140" as="geometry" />
+        </mxCell>
+
+        <mxCell id="target" value="&lt;b&gt;Target Website&lt;/b&gt;&lt;br/&gt;&lt;font style=&quot;font-size: 9px;&quot;&gt;Public HTTP(S) endpoint&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="970" y="510" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e1" value="1. POST /scrape&#10;{ url, [?wait=true] }" style="endArrow=classic;html=1;strokeColor=#333333;fontSize=10;exitX=0.4;exitY=1;exitDx=0;exitDy=0;entryX=0.4;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="client" target="api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="6. 202 Accepted&#10;{ jobId }" style="endArrow=classic;html=1;strokeColor=#333333;dashed=1;fontSize=10;exitX=0.7;exitY=0;exitDx=0;exitDy=0;entryX=0.7;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="api" target="client">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e2" value="2. POST /jobs (REST)" style="endArrow=classic;html=1;strokeColor=#333333;fontSize=10;exitX=0.3;exitY=1;exitDx=0;exitDy=0;entryX=0.3;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="api" target="jobmgr">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="5. { jobId }" style="endArrow=classic;html=1;strokeColor=#333333;dashed=1;fontSize=10;exitX=0.7;exitY=0;exitDx=0;exitDy=0;entryX=0.7;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="jobmgr" target="api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e3" value="3. INSERT job&#10;(status=pending)" style="endArrow=classic;html=1;strokeColor=#333333;fontSize=10;exitX=0.2;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="jobmgr" target="pg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="4. queue.add()&#10;(BullMQ)" style="endArrow=classic;html=1;strokeColor=#333333;fontSize=10;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="jobmgr" target="redis">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e7" value="7. Consume" style="endArrow=classic;html=1;strokeColor=#82b366;fontSize=10;strokeWidth=2;exitX=1;exitY=0.3;exitDx=0;exitDy=0;entryX=0;entryY=0.4;entryDx=0;entryDy=0;" edge="1" parent="1" source="redis" target="w1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e8" value="8. UPDATE&#10;status=in_progress" style="endArrow=classic;html=1;strokeColor=#82b366;fontSize=10;strokeWidth=2;" edge="1" parent="1" source="w1" target="pg">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="450" y="450" />
+              <mxPoint x="150" y="450" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e9" value="9. HTTP via proxy" style="endArrow=classic;html=1;strokeColor=#82b366;fontSize=10;strokeWidth=2;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="w1" target="proxy">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" value="10. GET url" style="endArrow=classic;html=1;strokeColor=#82b366;fontSize=10;strokeWidth=2;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="proxy" target="target">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" value="11. HTML" style="endArrow=classic;html=1;strokeColor=#82b366;dashed=1;fontSize=10;strokeWidth=2;" edge="1" parent="1" source="target" target="w1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1070" y="660" />
+              <mxPoint x="560" y="660" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e_cache" value="12. SETEX&#10;job:&lt;id&gt;:html (TTL)" style="endArrow=classic;html=1;strokeColor=#82b366;fontSize=10;strokeWidth=2;exitX=0;exitY=0.4;exitDx=0;exitDy=0;entryX=1;entryY=0.55;entryDx=0;entryDy=0;" edge="1" parent="1" source="w1" target="redis">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e12" value="13. UPDATE&#10;status=completed (metadata only)" style="endArrow=classic;html=1;strokeColor=#82b366;fontSize=10;strokeWidth=2;" edge="1" parent="1" source="w1" target="pg">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="440" y="675" />
+              <mxPoint x="150" y="675" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e13" value="14. PUBLISH&#10;job:&lt;id&gt;:done" style="endArrow=classic;html=1;strokeColor=#82b366;fontSize=10;strokeWidth=2;exitX=0;exitY=0.85;exitDx=0;exitDy=0;entryX=1;entryY=0.85;entryDx=0;entryDy=0;" edge="1" parent="1" source="w1" target="redis">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="note_read" value="&lt;b&gt;Read flow (polling, default async mode)&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;A. Client → API:&amp;nbsp;&lt;b&gt;GET /scrape/:id&lt;/b&gt;&lt;br/&gt;B. API → Job Manager: GET /jobs/:id → metadata&lt;br/&gt;C. If completed, API → Redis GET job:&amp;lt;id&amp;gt;:html&lt;br/&gt;D. Returns { status, html?, error?, attempts }&lt;br/&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;(html omitted once the TTL lapses)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;align=left;verticalAlign=top;fontSize=10;spacingLeft=8;spacingTop=4;" vertex="1" parent="1">
+          <mxGeometry x="40" y="690" width="290" height="130" as="geometry" />
+        </mxCell>
+
+        <mxCell id="note_wait" value="&lt;b&gt;Sync mode (?wait=true)&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;After step 4, API does NOT return 202. It registers&lt;br/&gt;a waiter, then &lt;b&gt;SUBSCRIBE&lt;/b&gt;s to job:&amp;lt;id&amp;gt;:done.&lt;br/&gt;On publish (step 14) it re-reads metadata, then&lt;br/&gt;GETs the HTML from Redis → 200 + HTML.&lt;br/&gt;504 on timeout · 503 on failure · 410 if TTL expired." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;align=left;verticalAlign=top;fontSize=10;spacingLeft=8;spacingTop=4;" vertex="1" parent="1">
+          <mxGeometry x="350" y="690" width="320" height="130" as="geometry" />
+        </mxCell>
+
+        <mxCell id="note_failure" value="&lt;b&gt;Failure handling&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;BullMQ retries with exponential backoff (3×).&lt;br/&gt;Each attempt picks the next proxy from the pool.&lt;br/&gt;Final failure → status=failed, error stored on row.&lt;br/&gt;Blocked/invalid URL (SSRF) → fails immediately,&lt;br/&gt;no retry (UnrecoverableError).&lt;br/&gt;Worker crash mid-job → BullMQ stalled-job recovery." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;align=left;verticalAlign=top;fontSize=10;spacingLeft=8;spacingTop=4;" vertex="1" parent="1">
+          <mxGeometry x="690" y="690" width="290" height="130" as="geometry" />
+        </mxCell>
+
+        <mxCell id="note_k8s" value="&lt;b&gt;K8s deployment (bonus)&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;3 Deployments: api, job-manager, scraper.&lt;br/&gt;ClusterIP Services for api↔jobmgr.&lt;br/&gt;Scraper HPA on queue depth (or CPU as MVP).&lt;br/&gt;Postgres &amp;amp; Redis as StatefulSets / managed.&lt;br/&gt;Bull Board exposed at /admin/queues." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;align=left;verticalAlign=top;fontSize=10;spacingLeft=8;spacingTop=4;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="690" width="260" height="130" as="geometry" />
+        </mxCell>
+
+        <mxCell id="legend_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="60" width="260" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_title" value="&lt;b&gt;Legend&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="65" width="100" height="18" as="geometry" />
+        </mxCell>
+
+        <mxCell id="leg_a_line" style="endArrow=classic;html=1;strokeColor=#333333;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1010" y="92" as="sourcePoint" />
+            <mxPoint x="1060" y="92" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg_a" value="Synchronous request" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1070" y="85" width="180" height="14" as="geometry" />
+        </mxCell>
+
+        <mxCell id="leg_b_line" style="endArrow=classic;html=1;strokeColor=#333333;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1010" y="110" as="sourcePoint" />
+            <mxPoint x="1060" y="110" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg_b" value="Response / return value" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1070" y="103" width="180" height="14" as="geometry" />
+        </mxCell>
+
+        <mxCell id="leg_c_line" style="endArrow=classic;html=1;strokeColor=#82b366;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1010" y="128" as="sourcePoint" />
+            <mxPoint x="1060" y="128" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg_c" value="Async worker flow" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1070" y="121" width="180" height="14" as="geometry" />
+        </mxCell>
+
+        <mxCell id="leg_d_line" style="endArrow=classic;html=1;strokeColor=#82b366;dashed=1;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1010" y="146" as="sourcePoint" />
+            <mxPoint x="1060" y="146" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg_d" value="External response" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1070" y="139" width="180" height="14" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
