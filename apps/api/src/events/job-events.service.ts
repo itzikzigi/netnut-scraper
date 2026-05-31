@@ -6,7 +6,10 @@ import Redis from 'ioredis';
 export class JobEventsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(JobEventsService.name);
   private subscriber!: Redis;
-  private readonly waiters = new Map<string, () => void>();
+  // Multiple `?wait=true` requests can await the same jobId concurrently, so
+  // each id maps to a SET of resolvers — a single slot would let a later
+  // waiter overwrite (and strand) an earlier one until its timeout fires.
+  private readonly waiters = new Map<string, Set<() => void>>();
 
   constructor(private readonly config: ConfigService) {}
 
@@ -20,8 +23,10 @@ export class JobEventsService implements OnModuleInit, OnModuleDestroy {
     this.subscriber.on('pmessage', (_pattern, channel) => {
       const match = channel.match(/^job:(.+):done$/);
       if (!match) return;
-      const resolve = this.waiters.get(match[1]);
-      if (resolve) resolve();
+      const resolvers = this.waiters.get(match[1]);
+      if (!resolvers) return;
+      // Copy before iterating: each resolve() mutates the set via cleanup().
+      for (const resolve of [...resolvers]) resolve();
     });
 
     await this.subscriber.psubscribe('job:*:done');
@@ -39,16 +44,32 @@ export class JobEventsService implements OnModuleInit, OnModuleDestroy {
    */
   waitFor(jobId: string, timeoutMs: number): Promise<void> {
     return new Promise<void>((resolve) => {
+      let waiter: () => void;
+
+      const cleanup = () => {
+        const set = this.waiters.get(jobId);
+        if (!set) return;
+        set.delete(waiter);
+        if (set.size === 0) this.waiters.delete(jobId);
+      };
+
       const timer = setTimeout(() => {
-        this.waiters.delete(jobId);
+        cleanup();
         resolve();
       }, timeoutMs);
 
-      this.waiters.set(jobId, () => {
+      waiter = () => {
         clearTimeout(timer);
-        this.waiters.delete(jobId);
+        cleanup();
         resolve();
-      });
+      };
+
+      let set = this.waiters.get(jobId);
+      if (!set) {
+        set = new Set();
+        this.waiters.set(jobId, set);
+      }
+      set.add(waiter);
     });
   }
 }

@@ -4,6 +4,9 @@ import { ScraperModule } from './scraper.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(ScraperModule);
+  // Fire OnModuleDestroy hooks on SIGTERM/SIGINT so the BullMQ worker stops
+  // pulling new jobs and the Redis publisher closes cleanly on shutdown.
+  app.enableShutdownHooks();
 
   const port = process.env.SCRAPER_PORT ?? 3002;
   await app.listen(port);
