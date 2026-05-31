@@ -2,6 +2,8 @@
 
 Nest.js monorepo for the Netnut backend home assignment. Three services build a scrape pipeline: an HTTP **API** receives jobs, the **Job Manager** validates / persists / enqueues them, and the **Scraper** workers consume the queue, fetch the target URL (optionally through a rotating proxy pool), and return the HTML.
 
+Scraping is slow, so the API is **async by default**: `POST /scrape` returns a `jobId` immediately (`202`). To get the HTML, either poll `GET /scrape/:id` or call `POST /scrape?wait=true` to block until the scrape completes and receive the HTML inline.
+
 See `architecture.drawio` for the full design.
 
 ## Layout
@@ -101,3 +103,27 @@ See `.env.example`. Key vars:
 - `synchronize: true` (TypeORM) is on in non-prod — auto-creates the `jobs` table. **Migrations are required for production**; not implemented in this take-home.
 - The Scraper writes job status directly to Postgres (intentional — see CLAUDE.md). Workers and Job Manager share `DatabaseModule` from `libs/shared`.
 - Scraped **HTML is cached in Redis with a TTL** (`RESULT_TTL_SECONDS`), not persisted in Postgres — results are transient, so Postgres holds only durable metadata. The API reads the body straight from Redis, bypassing the Job Manager hop.
+
+## Tradeoffs & scaling to production
+
+The brief left architecture open, so I built a working, well-factored slice and made deliberate scope cuts rather than half-building production infrastructure. This section names those cuts and what I'd change to run this at Netnut-scale (100s–1000s of req/s, many scraper pods). None of these are needed for the take-home; they're here to show the decisions were intentional.
+
+**Deliberate scoping decisions**
+
+- **REST between API ↔ Job Manager**, not gRPC/message bus. Fastest to read in review; the schema/serialization cost of gRPC doesn't earn its keep at this scope. At scale I'd keep REST for the public edge but consider gRPC for the internal hop.
+- **Config-based proxy pool** (`PROXY_POOL` env, in-memory round-robin), not a proxy-management service. This is the part closest to Netnut's actual product, so I built rotation + per-attempt retry + credential hygiene to show the shape — but kept it a single file.
+- **`synchronize: true` in non-prod**, no migrations. Ergonomic for a demo; production must run real migrations (`DB_SYNCHRONIZE=false` + a migration step).
+- **No auth / rate-limiting / multi-tenancy.** Out of scope for the brief, but the first thing a real proxy product needs.
+
+**What I'd change for large scale**
+
+- **HTML belongs in object storage, not Redis (or Postgres).** Redis-with-TTL is the right *mental model* (results are transient, PG stays metadata-only) and makes the migration small — but RAM caps how big/long you can retain. At scale: write bodies to S3/GCS (lifecycle rule = TTL for free), store the object key + size + sha256 in Postgres, and have the API return a **presigned URL** so the heavy bytes never transit the API/JM at all. Keep Redis as an optional short-TTL hot cache in front of S3 for the just-completed `?wait=true` read. Putting multi-MB HTML in Postgres would be the worst option — TOAST bloat, WAL/replication amplification, and vacuum pressure on the hottest table.
+- **Split Redis by role.** Queue, Pub/Sub, and the blob cache have opposite memory/throughput profiles and currently share one instance; a flood of large pages can pressure the queue. Separate instances/DBs, with a `maxmemory-policy` that won't evict queue keys.
+- **Tune BullMQ `lockDuration` above `FETCH_TIMEOUT_MS`.** The default 30 s lock is dangerously close to the 20 s fetch + DB/Redis writes under load — an expired lock means a stalled job gets re-processed (double fetch = double proxy spend). I'd set it to ~60 s and set `stalledInterval`/`maxStalledCount` explicitly.
+- **Make create→enqueue atomic.** Today the JM commits the job row, then enqueues; if Redis blips between them the job is stranded `pending` forever. Production needs a transactional outbox (or a reaper for stale `pending` rows) so no job is silently lost.
+- **Database: connection pooler + read path.** Add PgBouncer (transaction pooling) and explicit pool sizes — with HPA-scaled scraper pods each holding a TypeORM pool, connections exhaust before CPU does. Serve the read-heavy `GET /scrape/:id` from a replica.
+- **Backpressure & quotas.** API-key auth, per-tenant rate limits (`@nestjs/throttler` on Redis), and a queue-depth circuit breaker that returns `429` when the backlog is too deep, so the queue can't grow unbounded.
+- **Autoscale scrapers on queue depth, not CPU.** The HPA currently targets CPU; for a network-bound worker the correct signal is BullMQ backlog via the Prometheus adapter (noted in `k8s/README.md`).
+- **Proxy pool as a service.** Health checks, ban/cooldown tracking, weighting, and pool state shared across pods (the current per-pod round-robin counter distributes unevenly, and a few dead proxies silently eat a slice of traffic as retries).
+- **Observability.** Real `/health` endpoints (only TCP probes today), plus metrics for queue depth, fetch-latency percentiles, success rate per proxy, and Redis memory — you can't operate this blind at scale.
+- **Idempotent terminal writes.** Guard status updates (e.g. `WHERE status != 'completed'`) so a duplicate/stale worker can't overwrite a finished job.
