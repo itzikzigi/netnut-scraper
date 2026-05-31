@@ -1,8 +1,3 @@
-import { IsString, IsUrl, MaxLength } from 'class-validator';
+import { UrlInputDto } from '@app/shared';
 
-export class CreateScrapeDto {
-  @IsString()
-  @IsUrl({ require_protocol: true, require_valid_protocol: true })
-  @MaxLength(2048)
-  url!: string;
-}
+export class CreateScrapeDto extends UrlInputDto {}

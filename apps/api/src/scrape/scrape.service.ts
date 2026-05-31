@@ -19,13 +19,12 @@ export interface ScrapeCompletedResponse {
   html: string;
 }
 
-export interface ScrapeStatusResponse {
-  id: string;
-  status: JobResponseDto['status'];
+// Derived from the JM DTO so id/status/attempts stay in lockstep with the
+// domain type; html/error are re-declared because they go nullable → optional.
+export type ScrapeStatusResponse = Pick<JobResponseDto, 'id' | 'status' | 'attempts'> & {
   html?: string;
   error?: string;
-  attempts: number;
-}
+};
 
 @Injectable()
 export class ScrapeService {
